@@ -1,0 +1,11 @@
+{
+    "domain": "techfine_cloud",
+    "name": "Techfine Cloud (SiSe)",
+    "codeowners": [],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://solar.siseli.com",
+    "iot_class": "cloud_polling",
+    "requirements": [],
+    "version": "1.0.0"
+  }
