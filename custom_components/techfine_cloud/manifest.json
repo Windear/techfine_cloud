@@ -4,8 +4,8 @@
     "codeowners": [],
     "config_flow": true,
     "dependencies": [],
-    "documentation": "https://solar.siseli.com",
+    "documentation": "https://github.com/",
     "iot_class": "cloud_polling",
-    "requirements": [],
-    "version": "1.0.0"
-  }
+    "requirements": ["requests>=2.31.0"],
+    "version": "1.1.0"
+}
