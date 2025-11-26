@@ -1,188 +1,182 @@
-# Techfine Cloud 集成
+# Techfine Cloud (SiSe) 光伏逆变器 Home Assistant 集成
 
-# Techfine Cloud (SiSe Solar) for Home Assistant
+这是一个用于 Home Assistant 的第三方集成，可实现 Techfine/SiSe 光伏逆变器的**数据实时同步、状态监控、历史数据追踪**等功能，全程自动化运行，无需人工干预。
 
-![Image](https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/online_import/94f766d040c7496eb7d5c75026864296~tplv-noop.jpeg?rk3s=49177a0b&x-expires=1764141167&x-signature=Ma8YBsE16csPJVhVtFe%2Fcr61idU%3D&resource_key=40e46846-3f96-4db5-8b56-d75078c1115b&resource_key=40e46846-3f96-4db5-8b56-d75078c1115b)
+## 功能特点
 
-![Image](https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/online_import/b7ede164d1e3490bb0f9724bdb494818~tplv-noop.jpeg?rk3s=49177a0b&x-expires=1764141167&x-signature=7cmdsgsys8gM7XavFPr%2FF%2BcjrS8%3D&resource_key=890e0fd9-3439-487f-b4ef-5ffee2e130bf&resource_key=890e0fd9-3439-487f-b4ef-5ffee2e130bf)
+1. **全量数据同步**：覆盖发电量（日/月/年/总）、功率、电池状态、电网参数、设备状态等核心数据
 
-![Image](https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/online_import/de3f6d68f6e64d4eafb33514ce739025~tplv-noop.jpeg?rk3s=49177a0b&x-expires=1764141167&x-signature=eYrYGKsUX5OUCzZa59FGqT986fQ%3D&resource_key=c65f1f4c-5d13-4c13-813b-8f4afca8be92&resource_key=c65f1f4c-5d13-4c13-813b-8f4afca8be92)
+2. **自动 Token 管理**：登录 Token 失效时自动重新登录，无需人工操作
 
-[English](#english) | [中文说明](#中文说明)
+3. **高频数据刷新**：默认 10 秒刷新一次，实时反馈设备状态
 
----
+4. **调试友好**：内置调试传感器，便于问题排查
 
-<a name="english"></a>
+5. **兼容广泛**：适配新旧版本 Home Assistant，支持 11 位手机号自动添加 86-前缀
 
-## English Description
+## 前置条件
 
-A custom component for Home Assistant to integrate **Techfine / SiSe Solar** inverters via the cloud API (`solar.siseli.com`).
+1. 拥有 Techfine/SiSe 光伏逆变器及对应的账号密码（需能正常登录官方 APP/网页）
 
-**Why this integration?**
+2. Home Assistant 版本 ≥ 2022.11（旧版本可尝试，不保证兼容）
 
-Many new Techfine WiFi loggers (firmware SolarV57+) have **locked local ports (8899/Telnet)** and hidden configuration pages, making local integration (Modbus/Solarman) impossible. This integration solves that by fetching data directly from the cloud using the official mobile app's API.
+3. 网络可访问逆变器官方服务器（`https://solar.siseli.com`）
 
-### Features
+## 安装方法
 
-- ☁️ **Cloud Polling**: Works even if local ports 8899/1883 are blocked.
+### 方法 1：通过 HACS 安装（推荐）
 
-- 🔐 **Secure Auth**: Automatically handles MD5 password hashing and HMAC-SHA256 API signing.
+1. 打开 Home Assistant → HACS → 集成 → 右上角「三个点」→ 自定义仓库
 
-- ⚡ **Real-time Data**: Updates every **10 seconds** (configurable).
+2. 仓库 URL：`https://github.com/Windear/techfine_cloud`（替换为你的仓库地址）
 
-- 📊 **Comprehensive Metrics**: Monitors PV Power, Grid Voltage, Battery SoC, Charging/Discharging Currents, and Daily/Total Energy.
+3. 类别：`Integration` → 点击「添加」
 
-- 🛠 **UI Config**: Easy setup via Home Assistant UI.
+4. 等待仓库加载完成后，搜索「Techfine Cloud (SiSe)」→ 点击「下载」
 
-- 🌐 **Chinese Language Support**: Sensors and device names are displayed in Chinese for better user experience.
+5. 下载完成后，重启 Home Assistant
 
-### Installation
+### 方法 2：手动安装
 
-#### Method 1: HACS (Recommended)
+1. 下载本项目最新版本的 [ZIP 压缩包](https://github.com/Windear/techfine_cloud/archive/refs/heads/main.zip)
 
-1. Open HACS -> Integrations.
+2. 解压后，将 `techfine_cloud` 文件夹复制到 Home Assistant 的 `config/custom_components/` 目录下
 
-2. Click the 3 dots in the top right corner -> **Custom repositories**.
+3. 重启 Home Assistant
 
-3. Paste this repository URL.
+## 配置步骤
 
-4. Category: **Integration**.
+1. 重启完成后，进入 Home Assistant → 设置 → 设备与服务 → 集成 → 右上角「添加集成」
 
-5. Click **Add**, then search for "Techfine Cloud" and install.
+2. 搜索「Techfine Cloud (SiSe)」并选择
 
-6. Restart Home Assistant.
+3. 按照引导输入以下信息：
 
-#### Method 2: Manual
+    - 用户名：登录官方 APP/网页的账号（通常是手机号）
 
-1. Download the `custom_components/techfine_cloud` folder from this repo.
+    - 密码：登录密码
 
-2. Copy it to your Home Assistant's `config/custom_components/` directory.
+    - 设备 ID：逆变器的设备 ID（可在官方 APP/网页的设备详情中查看）
 
-3. Restart Home Assistant.
+4. 点击「提交」，集成将自动完成登录和数据同步
 
-### Configuration
+5. 配置成功后，可在「设备与服务」中查看新增的设备及传感器
 
-1. Go to **Settings** -> **Devices & Services**.
+## 传感器列表（按优先级排序）
 
-2. Click **Add Integration** and search for **Techfine Cloud**.
-
-3. Enter your:
-
-    - **Username**: Your login phone number/account.
-
-    - **Password**: Your login password (Plain text).
-
-    - **Device ID**: The ID of your inverter (Found in the URL of the web dashboard).
-
----
-
-<a name="中文说明"></a>
-
-## 中文说明
-
-这是一个 Home Assistant 自定义集成，用于通过云端 API (`solar.siseli.com`) 接入 **泰琪丰 (Techfine) / 四色光伏 (SiSe Solar)** 的逆变器数据。
-
-**背景：**
-
-许多新款的 Techfine WiFi 采集器（特别是固件版本 SolarV57及以上）**封锁了本地 TCP 8899 和 MQTT 端口**，且隐藏了配置页面，导致无法使用 Solarman 集成进行本地接入。本插件通过模拟 App 的云端通信协议，完美解决了无法获取数据的问题。
-
-### ✨ 功能特点
-
-- ☁️ **无视端口封锁**：不需要硬件破解，不需要 ESP32，只要设备在线即可获取数据。
-
-- 🔐 **自动签名认证**：内置了 App 的核心加密算法（MD5 + HMAC-SHA256），自动处理 Token 获取与续期。
-
-- 🔄 **秒级刷新**：默认 **10秒** 刷新一次数据，接近本地体验。
-
-- 📈 **数据全**：支持光伏板(PV)、电池(Battery)、电网(Grid)、负载(Load)等全方位数据监控。
-
-- 🛠 **配置简单**：直接在 HA 界面输入账号密码即可，无需编写 YAML。
-
-- 🌐 **中文界面**：设备和传感器名称均为中文，更符合中文用户习惯。
-
-### 🚀 安装方法
-
-#### 方法一：HACS 安装 (推荐)
-
-1. 打开 Home Assistant 的 **HACS** -> **集成**。
-
-2. 点击右上角三个点 -> **自定义仓库**。
-
-3. 输入本项目的 GitHub 地址。
-
-4. 类别选择：**集成**。
-
-5. 点击添加，然后搜索 **Techfine Cloud** 并下载。
-
-6. 重启 Home Assistant。
-
-#### 方法二：手动安装
-
-1. 下载本项目。
-
-2. 将 `custom_components/techfine_cloud` 文件夹完整复制到你的 HA 配置目录下的 `custom_components/` 文件夹中。
-
-3. 重启 Home Assistant。
-
-### ⚙️ 配置说明
-
-1. 重启 HA 后，进入 **配置** -> **设备与服务**。
-
-2. 点击右下角 **添加集成**。
-
-3. 搜索 **Techfine** 或 **SiSe**。
-
-4. 在弹出的窗口中输入：
-
-    - **Username**: 你的登录账号（通常是手机号）。
-
-    - **Password**: 你的登录密码（直接填明文，插件会自动加密）。
-
-    - **Device ID**: 你的设备 ID。
-
-![Image](&resource_key=)
-
-### ❓ 如何获取 Device ID
-
-1. 电脑浏览器登录 [四色光伏云平台](https://solar.siseli.com)。
-
-2. 点击进入设备详情页。
-
-3. 在浏览器地址栏 URL 中找到 `deviceId=` 后面的数字（通常是 18 位数字）。
-
-![Image](&resource_key=)
-
-### 📊 支持的传感器列表
-
-插件会自动创建以下实体（Entity），并按优先级排序：
-
-|实体ID (Entity ID)|显示名称|说明|单位|
+|传感器名称|实体 ID 前缀|单位|说明|
 |---|---|---|---|
-|`sensor.techfine_cloud_发电功率`|发电功率|光伏输入总功率|W|
-|`sensor.techfine_cloud_输出有功功率`|输出有功功率|逆变器总输出功率|kW|
-|`sensor.techfine_cloud_市电电压`|市电电压|电网输入电压|V|
-|`sensor.techfine_cloud_电池电压`|电池电压|电池两端电压|V|
-|`sensor.techfine_cloud_电池充电电流`|电池充电电流|电池正在充电的电流|A|
-|`sensor.techfine_cloud_电池放电电流`|电池放电电流|电池正在放电的电流|A|
-|`sensor.techfine_cloud_电池容量`|电池容量|电池剩余电量百分比 (SoC)|%|
-|`sensor.techfine_cloud_pv电压`|PV电压|光伏阵列输入电压|V|
-|`sensor.techfine_cloud_pv电流`|PV电流|光伏阵列输入电流|A|
-|`sensor.techfine_cloud_输出电压`|输出电压|逆变器交流输出电压|V|
-|`sensor.techfine_cloud_负载百分比`|负载百分比|逆变器当前负载率|%|
-|`sensor.techfine_cloud_今日发电量`|今日发电量|当天累计发电量|kWh|
-|`sensor.techfine_cloud_总发电量`|总发电量|设备累计总发电量|kWh|
-|`sensor.techfine_cloud_逆变器温度`|逆变器温度|逆变器内部散热片温度|°C|
-|`sensor.techfine_cloud_调试状态`|调试状态|插件运行状态和错误信息|-|
+|日发电量|`sensor.techfine_光伏逆变器_日发电量`|kWh|当日累计发电量|
+|月发电量|`sensor.techfine_光伏逆变器_月发电量`|kWh|当月累计发电量|
+|年发电量|`sensor.techfine_光伏逆变器_年发电量`|kWh|当年累计发电量|
+|总发电量|`sensor.techfine_光伏逆变器_总发电量`|kWh|设备累计总发电量|
+|PV 功率|`sensor.techfine_光伏逆变器_pv功率`|W|光伏板实时功率|
+|发电功率|`sensor.techfine_光伏逆变器_发电功率`|kW|设备总发电功率|
+|输出有功功率|`sensor.techfine_光伏逆变器_输出有功功率`|kW|向电网输出的有功功率|
+|市电功率|`sensor.techfine_光伏逆变器_市电功率`|kW|电网输入/输出功率（负值为输入）|
+|电池容量|`sensor.techfine_光伏逆变器_电池容量`|%|储能电池剩余电量|
+|电池电压|`sensor.techfine_光伏逆变器_电池电压`|V|电池实时电压|
+|电池充电电流|`sensor.techfine_光伏逆变器_电池充电电流`|A|电池充电电流|
+|电池放电电流|`sensor.techfine_光伏逆变器_电池放电电流`|A|电池放电电流|
+|市电电压|`sensor.techfine_光伏逆变器_市电电压`|V|电网输入电压|
+|市电频率|`sensor.techfine_光伏逆变器_市电频率`|Hz|电网频率|
+|逆变温度|`sensor.techfine_光伏逆变器_逆变温度`|°C|逆变器核心温度|
+|变压器温度|`sensor.techfine_光伏逆变器_变压器温度`|°C|变压器温度|
+|工作模式|`sensor.techfine_光伏逆变器_工作模式`|-|设备当前工作模式（如：并网发电、储能充电）|
+|并网标志|`sensor.techfine_光伏逆变器_并网标志`|-|并网状态（如：已并网、未并网）|
+|调试状态|`sensor.techfine_光伏逆变器_调试状态`|-|集成运行状态（用于问题排查）|
+## 常见问题排查
+
+### 1. 集成添加失败，提示「登录失败」
+
+- 检查用户名/密码是否正确（注意手机号是否需要带国家码）
+
+- 确认设备 ID 是否正确（可在官方 APP 中复制）
+
+- 检查网络是否能访问 `https://solar.siseli.com`（可尝试 ping 测试）
+
+### 2. 传感器显示「不可用」
+
+- 查看「调试状态」传感器，获取具体错误信息
+
+- 检查逆变器是否在线（官方 APP 中确认）
+
+- 确认网络通畅，无防火墙拦截请求
+
+### 3. 数据不更新
+
+- 查看 HA 日志（设置 → 系统 → 日志），搜索「techfine_cloud」查看报错
+
+- 确认 Token 未失效（集成会自动重登，无需手动操作）
+
+- 尝试重启集成（设备与服务 → Techfine Cloud → 右上角「三个点」→ 重新加载）
+
+### 4. 报错「SSL 验证失败」
+
+- 集成已默认关闭 SSL 验证，若仍报错，可检查网络环境（如：代理、VPN）
+
+## 自定义配置（可选）
+
+若需修改默认配置（如刷新间隔），可在 `config/custom_components/techfine_cloud/sensor.py` 头部修改以下参数：
+
+```Python
+# 数据刷新间隔（默认10秒，最小可设5秒）
+UPDATE_INTERVAL_SECONDS = 10
+
+# Token失效判定条件（无需修改）
+TOKEN_EXPIRED_CODE = 9
+TOKEN_EXPIRED_MSG = "Token expired"
+
+```
+
+修改后需重启 Home Assistant 生效。
+
+## 日志查看
+
+若需排查问题，可在 `config/configuration.yaml` 中添加日志配置，获取详细运行日志：
+
+```YAML
+logger:
+  default: warning
+  logs:
+    custom_components.techfine_cloud: debug
+
+```
+
+重启 HA 后，可在「设置 → 系统 → 日志」中查看详细输出。
+
+## 免责声明
+
+1. 本集成是第三方非官方工具，仅用于数据同步，不涉及设备控制
+
+2. 使用本集成前，请确保已了解官方服务条款，避免违规操作
+
+3. 作者不对因使用本集成导致的设备故障、数据丢失、服务封禁等问题负责
+
+4. 集成仅获取公开的设备数据，不会存储用户账号密码（密码仅用于登录官方服务器）
+
+## 贡献代码
+
+欢迎提交 PR 或 Issue 改进本集成：
+
+- 提交 Issue：描述问题现象、HA 版本、报错日志
+
+- 提交 PR：请遵循 Home Assistant 集成开发规范，确保代码风格一致
+
+## 联系作者
+
+若有问题或建议，可通过以下方式联系：
+
+- GitHub Issue：[点击提交](https://github.com/Windear/techfine_cloud/issues)
+
+- 邮箱：[your-email@example.com](bob23456@163.com)
+
 ---
 
-### ⚠️ 免责声明 (Disclaimer)
+**更新日志**
 
-- 本插件为非官方开发 (Unofficial)，仅供学习交流使用。
+- v1.2.0：全字段覆盖，优化传感器排序，添加调试传感器
 
-- 数据来源于四色光伏云平台，虽然 API 允许高频访问，但请合理使用。
+- v1.1.0：实现 Token 自动重登，优化登录逻辑
 
-- This integration is not affiliated with Techfine or SiSe Solar.
-
----
-
-**Created by [windy]**
+- v1.0.0：初始版本，支持核心数据同步
