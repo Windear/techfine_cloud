@@ -12,7 +12,6 @@ from homeassistant.const import (
     UnitOfPower, UnitOfElectricPotential, UnitOfElectricCurrent,
     UnitOfEnergy, PERCENTAGE, UnitOfTemperature
 )
-# 修复：添加 DataUpdateCoordinator 和 UpdateFailed 的导入
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.entity import DeviceInfo
 
@@ -20,15 +19,16 @@ from homeassistant.helpers.entity import DeviceInfo
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "techfine_cloud"
 
-# 配置项键名（与config_flow对应）
+# 配置项键名（改为 DTUID，移除原 DeviceID）
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
-CONF_DEVICE_ID = "device_id"
+CONF_DTU_ID = "dtu_id"  # 新增：用户输入的 DTUID（数字串，如 53676403221983325773）
 
 # API 核心配置
 APP_ID = "rBrTRfAPXz"
 APP_SECRET = "CJbrtLtqFES62bJ3ZW7c"
 AUTH_URL = "https://solar.siseli.com/apis/login/account"  # 登录接口
+DTU_INFO_URL_TEMPLATE = "https://solar.siseli.com/apis/device/dtu/info?dtuDtuid={}"  # DTU信息接口（用于获取DeviceID）
 DATA_URL_TEMPLATE = "https://solar.siseli.com/apis/deviceState/simple/state/latest/v1?deviceId={}&dataSource=1"  # 数据接口
 
 # 数据刷新间隔（10秒/次）
@@ -43,10 +43,11 @@ HERTZ = "Hz"
 # ==============================================================================
 
 class TechfineAPI:
-    def __init__(self, username, password, device_id):
+    def __init__(self, username, password, dtu_id):
         self.username = username
         self.raw_password = password
-        self.device_id = device_id
+        self.dtu_id = dtu_id  # 用户输入的 DTUID
+        self.device_id = None  # 自动获取的 DeviceID（从DTU接口解析）
         self.token = None  # 当前有效Token
         self.last_login_time = None  # 上次登录时间（用于日志追踪）
         self.last_debug_msg = "Initializing..."  # 调试信息
@@ -127,6 +128,11 @@ class TechfineAPI:
                 self.last_login_time = datetime.now()
                 self.last_debug_msg = f"登录成功（Token前6位: {self.token[:6]}...）"
                 _LOGGER.info(f"登录成功，Token有效期预计24小时，上次登录时间: {self.last_login_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                # 登录成功后，自动获取DeviceID
+                if not self._fetch_device_id_from_dtu():
+                    self.last_debug_msg = "登录成功，但获取DeviceID失败"
+                    _LOGGER.error("登录成功，但无法通过DTUID获取DeviceID")
+                    return False
                 return True
             else:
                 error_msg = result.get("message", "未知错误")
@@ -144,21 +150,74 @@ class TechfineAPI:
             _LOGGER.error(f"登录异常: {e}", exc_info=True)
         return False
 
+    def _fetch_device_id_from_dtu(self):
+        """通过DTUID获取DeviceID（从 devicesAlreadyAdded 中提取第一个设备的id）"""
+        _LOGGER.debug(f"开始通过DTUID获取DeviceID，DTUID: {self.dtu_id}")
+        if not self.token:
+            _LOGGER.error("获取DeviceID失败：无有效Token")
+            return False
+
+        # 构造DTU信息请求
+        dtu_info_url = DTU_INFO_URL_TEMPLATE.format(self.dtu_id)
+        dtu_headers = self.headers.copy()
+        dtu_headers["iot-token"] = self.token
+
+        try:
+            response = requests.get(
+                dtu_info_url,
+                headers=dtu_headers,
+                timeout=15,
+                verify=False
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # 解析DTU接口返回
+            if result.get("code") != 0:
+                error_msg = result.get("message", "未知错误")
+                _LOGGER.error(f"DTU信息接口返回异常：{error_msg}（code: {result.get('code')}）")
+                return False
+
+            # 提取devicesAlreadyAdded中的第一个设备id
+            devices = result.get("data", {}).get("devicesAlreadyAdded", [])
+            if not devices:
+                _LOGGER.error(f"DTUID {self.dtu_id} 未关联任何设备（devicesAlreadyAdded为空）")
+                return False
+
+            # 取第一个已添加设备的id作为DeviceID
+            self.device_id = devices[0]["id"]
+            device_name = devices[0].get("name", "未知设备")
+            _LOGGER.info(f"成功获取DeviceID：{self.device_id}（设备名称：{device_name}）")
+            self.last_debug_msg = f"成功获取DeviceID：{self.device_id[:8]}..."
+            return True
+
+        except requests.exceptions.RequestException as e:
+            _LOGGER.error(f"获取DeviceID网络错误：{str(e)}")
+        except Exception as e:
+            _LOGGER.error(f"获取DeviceID解析异常：{str(e)}", exc_info=True)
+        return False
+
     def fetch_device_data(self):
-        """获取设备数据（核心逻辑：Token失效自动重登）"""
-        # 1. 无Token时直接触发登录
+        """获取设备数据（核心逻辑：Token失效自动重登 + DeviceID校验）"""
+        # 1. 无Token时直接触发登录（登录时会自动获取DeviceID）
         if not self.token:
             _LOGGER.warning("无有效Token，首次登录...")
             if not self.login():
                 return {"_error": self.last_debug_msg}
 
-        # 2. 构造数据请求参数
+        # 2. 校验DeviceID是否存在（防止获取失败）
+        if not self.device_id:
+            _LOGGER.warning("无有效DeviceID，尝试重新获取...")
+            if not self._fetch_device_id_from_dtu():
+                return {"_error": "DeviceID获取失败，请检查DTUID是否正确"}
+
+        # 3. 构造数据请求参数
         data_url = DATA_URL_TEMPLATE.format(self.device_id)
         data_headers = self.headers.copy()
         data_headers["iot-token"] = self.token  # 携带Token
 
         try:
-            # 3. 发送数据请求
+            # 4. 发送数据请求
             response = requests.get(
                 data_url,
                 headers=data_headers,
@@ -166,7 +225,7 @@ class TechfineAPI:
                 verify=False
             )
 
-            # 4. 解析响应（先处理JSON格式）
+            # 5. 解析响应（先处理JSON格式）
             try:
                 result = response.json()
             except json.JSONDecodeError:
@@ -174,7 +233,7 @@ class TechfineAPI:
                 _LOGGER.error(f"数据接口返回格式异常: {response.text}")
                 return {"_error": self.last_debug_msg}
 
-            # 5. 精准判定Token失效（匹配 code=9 + message=Token expired）
+            # 6. 精准判定Token失效（匹配 code=9 + message=Token expired）
             token_expired = False
             if result.get("code") == TOKEN_EXPIRED_CODE and result.get("message") == TOKEN_EXPIRED_MSG:
                 token_expired = True
@@ -182,10 +241,10 @@ class TechfineAPI:
                 # 补充HTTP状态码判定（如401/403）
                 token_expired = True
 
-            # 6. Token失效时自动重登并重新请求数据
+            # 7. Token失效时自动重登并重新请求数据（重登时会自动刷新DeviceID）
             if token_expired:
                 _LOGGER.warning(f"Token失效（code: {result.get('code')}, message: {result.get('message')}），触发自动重登...")
-                if self.login():  # 重登成功获取新Token
+                if self.login():  # 重登成功（会自动重新获取DeviceID）
                     data_headers["iot-token"] = self.token  # 更新Token
                     # 重新发送数据请求
                     response = requests.get(
@@ -200,14 +259,16 @@ class TechfineAPI:
                     # 重登失败返回错误
                     return {"_error": "Token失效，自动重登失败"}
 
-            # 7. 解析有效数据（code=0 为成功）
+            # 8. 解析有效数据（code=0 为成功）
             if result.get("code") == 0 and "fields" in result.get("data", {}):
                 self.last_debug_msg = f"数据更新成功（{datetime.now().strftime('%H:%M:%S')}）"
                 # 返回字段数据 + 调试信息
                 return {
                     **result["data"]["fields"],
                     "_debug_msg": self.last_debug_msg,
-                    "_raw_preview": json.dumps(result, ensure_ascii=False)[:300]  # 原始数据预览（截取前300字符）
+                    "_raw_preview": json.dumps(result, ensure_ascii=False)[:300],  # 原始数据预览（截取前300字符）
+                    "_device_id": self.device_id,  # 新增：在调试数据中携带DeviceID
+                    "_dtu_id": self.dtu_id  # 新增：在调试数据中携带DTUID
                 }
             else:
                 # 数据接口返回异常（非Token失效）
@@ -227,13 +288,18 @@ class TechfineAPI:
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Home Assistant集成入口（初始化传感器）"""
-    # 1. 从配置中读取参数
+    # 1. 从配置中读取参数（改为读取DTUID）
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
-    device_id = entry.data[CONF_DEVICE_ID]
+    dtu_id = entry.data[CONF_DTU_ID]
 
-    # 2. 初始化API客户端
-    api_client = TechfineAPI(username, password, device_id)
+    # 校验DTUID格式（纯数字串，避免明显错误）
+    if not dtu_id.isdigit():
+        _LOGGER.error(f"DTUID格式错误：{dtu_id}（必须是纯数字串）")
+        return
+
+    # 2. 初始化API客户端（传入DTUID，而非DeviceID）
+    api_client = TechfineAPI(username, password, dtu_id)
 
     # 3. 定义异步数据更新协调器（10秒刷新一次）
     async def async_update_data():
@@ -243,7 +309,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name=f"techfine_inverter_{device_id}",  # 协调器名称（用于日志）
+        name=f"techfine_inverter_{dtu_id}",  # 协调器名称改为DTUID前缀
         update_method=async_update_data,
         update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS)  # 配置项中定义的10秒刷新
     )
@@ -254,63 +320,63 @@ async def async_setup_entry(hass, entry, async_add_entities):
     except Exception as e:
         _LOGGER.warning(f"首次数据刷新失败: {str(e)}，将在{UPDATE_INTERVAL_SECONDS}秒后自动重试")
 
-    # 5. 设备信息（用于HA设备列表显示）
+    # 5. 设备信息（用于HA设备列表显示，添加DTUID标识）
     device_info = DeviceInfo(
-        identifiers={(DOMAIN, device_id)},  # 唯一设备标识
-        name="Techfine 光伏逆变器",
+        identifiers={(DOMAIN, api_client.device_id or dtu_id)},  # 用DeviceID或DTUID作为唯一标识
+        name=f"Techfine 光伏逆变器（DTU: {dtu_id[-8:]}）",  # 设备名称显示DTUID后8位（简洁）
         manufacturer="Techfine / SiSe Solar",
         model="混合式逆变器",
         configuration_url="https://solar.siseli.com",
-        sw_version="1.3.2"  # 集成版本号（修复导入错误）
+        sw_version="1.4.0"  # 集成版本号（支持DTUID自动解析）
     )
 
     # ======================== 全字段传感器定义（按优先级排序）========================
     sensors = [
         # 一、核心发电量（用户最关注）
-        TechfineSensor(coordinator, device_id, device_info, "tqfDailyElectricityGeneration", "日发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
-        TechfineSensor(coordinator, device_id, device_info, "tqfMonthlyElectricityGeneration", "月发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
-        TechfineSensor(coordinator, device_id, device_info, "tqfYearlyElectricityGeneration", "年发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
-        TechfineSensor(coordinator, device_id, device_info, "tqfTotalElectricityGeneration", "总发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfDailyElectricityGeneration", "日发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfMonthlyElectricityGeneration", "月发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfYearlyElectricityGeneration", "年发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfTotalElectricityGeneration", "总发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
         
         # 二、核心功率数据
-        TechfineSensor(coordinator, device_id, device_info, "pvPower", "PV功率", UnitOfPower.WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, device_id, device_info, "generationPower", "发电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, device_id, device_info, "outputActivePower", "输出有功功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, device_id, device_info, "mainsPower", "市电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "pvPower", "PV功率", UnitOfPower.WATT, SensorDeviceClass.POWER),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "generationPower", "发电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputActivePower", "输出有功功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "mainsPower", "市电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
         
         # 三、电池核心数据
-        TechfineSensor(coordinator, device_id, device_info, "batteryCapacity", "电池容量", PERCENTAGE, SensorDeviceClass.BATTERY),
-        TechfineSensor(coordinator, device_id, device_info, "batteryVoltage", "电池电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
-        TechfineSensor(coordinator, device_id, device_info, "batteryChargingCurrent", "电池充电电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
-        TechfineSensor(coordinator, device_id, device_info, "batteryDischargeCurrent", "电池放电电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
-        TechfineSensor(coordinator, device_id, device_info, "batteryStatus", "电池状态", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryCapacity", "电池容量", PERCENTAGE, SensorDeviceClass.BATTERY),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryVoltage", "电池电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryChargingCurrent", "电池充电电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryDischargeCurrent", "电池放电电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryStatus", "电池状态", None, None),
         
         # 四、电网相关数据
-        TechfineSensor(coordinator, device_id, device_info, "acInputVoltage", "市电电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
-        TechfineSensor(coordinator, device_id, device_info, "mainsFrequency", "市电频率", HERTZ, None),
-        TechfineSensor(coordinator, device_id, device_info, "mainsCurrentFlowDirection", "市电电流流向", None, None),
-        TechfineSensor(coordinator, device_id, device_info, "gridConnectedCurrent", "并网电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "acInputVoltage", "市电电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "mainsFrequency", "市电频率", HERTZ, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "mainsCurrentFlowDirection", "市电电流流向", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "gridConnectedCurrent", "并网电流", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT),
         
         # 五、输出相关数据
-        TechfineSensor(coordinator, device_id, device_info, "outputVoltage", "输出电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
-        TechfineSensor(coordinator, device_id, device_info, "outputFrequency", "输出频率", HERTZ, None),
-        TechfineSensor(coordinator, device_id, device_info, "outputApparentPower", "输出视在功率", "VA", None),
-        TechfineSensor(coordinator, device_id, device_info, "outputLoadPercent", "输出负载百分比", PERCENTAGE, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputVoltage", "输出电压", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputFrequency", "输出频率", HERTZ, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputApparentPower", "输出视在功率", "VA", None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputLoadPercent", "输出负载百分比", PERCENTAGE, None),
         
         # 六、设备状态数据
-        TechfineSensor(coordinator, device_id, device_info, "inverterTemperature", "逆变温度", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
-        TechfineSensor(coordinator, device_id, device_info, "transformerTemperature", "变压器温度", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
-        TechfineSensor(coordinator, device_id, device_info, "fan1Status", "风扇1状态", None, None),
-        TechfineSensor(coordinator, device_id, device_info, "fan2Status", "风扇2状态", None, None),
-        TechfineSensor(coordinator, device_id, device_info, "workingMode", "工作模式", None, None),
-        TechfineSensor(coordinator, device_id, device_info, "gridConnectionSign", "并网标志", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "inverterTemperature", "逆变温度", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "transformerTemperature", "变压器温度", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "fan1Status", "风扇1状态", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "fan2Status", "风扇2状态", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "workingMode", "工作模式", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "gridConnectionSign", "并网标志", None, None),
         
         # 七、设备信息数据
-        TechfineSensor(coordinator, device_id, device_info, "deviceType", "设备类型", None, None),
-        TechfineSensor(coordinator, device_id, device_info, "softwareVersion", "软件版本", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "deviceType", "设备类型", None, None),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "softwareVersion", "软件版本", None, None),
         
-        # 八、调试传感器（最后显示，用于问题排查）
-        TechfineDebugSensor(coordinator, device_id, device_info, "debug_status", "调试状态"),
+        # 八、调试传感器（最后显示，用于问题排查，新增DTUID/DeviceID显示）
+        TechfineDebugSensor(coordinator, api_client.device_id or dtu_id, device_info, "debug_status", "调试状态"),
     ]
 
     # 批量添加传感器到HA
@@ -318,10 +384,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class TechfineSensor(SensorEntity):
     """通用传感器类（适配所有数据字段）"""
-    def __init__(self, coordinator, device_id, device_info, field_key, name, unit, device_class, state_class=None):
+    def __init__(self, coordinator, device_unique_id, device_info, field_key, name, unit, device_class, state_class=None):
         self.coordinator = coordinator  # 数据协调器
         self._field_key = field_key  # 接口返回的字段名
-        self._attr_unique_id = f"{DOMAIN}_{device_id}_{field_key}"  # 唯一ID（避免重复）
+        self._attr_unique_id = f"{DOMAIN}_{device_unique_id}_{field_key}"  # 唯一ID（避免重复）
         self._attr_has_entity_name = True  # 启用实体名称（HA 2023.12+要求）
         self._attr_name = name  # 传感器显示名称（中文）
         self._attr_native_unit_of_measurement = unit  # 单位
@@ -360,10 +426,10 @@ class TechfineSensor(SensorEntity):
         self.async_on_remove(self.coordinator.async_add_listener(self.async_write_ha_state))
 
 class TechfineDebugSensor(SensorEntity):
-    """调试传感器（显示集成运行状态）"""
-    def __init__(self, coordinator, device_id, device_info, field_key, name):
+    """调试传感器（显示集成运行状态，新增DTUID/DeviceID）"""
+    def __init__(self, coordinator, device_unique_id, device_info, field_key, name):
         self.coordinator = coordinator
-        self._attr_unique_id = f"{DOMAIN}_{device_id}_{field_key}"
+        self._attr_unique_id = f"{DOMAIN}_{device_unique_id}_{field_key}"
         self._attr_has_entity_name = True
         self._attr_name = name
         self._attr_icon = "mdi:bug"  # 调试图标
@@ -382,11 +448,13 @@ class TechfineDebugSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """额外属性（显示原始数据预览）"""
+        """额外属性（显示DTUID、DeviceID、原始数据预览）"""
         if not self.coordinator.data:
             return {"说明": "集成初始化中，暂无数据"}
         data = self.coordinator.data
         return {
+            "DTUID": data.get("_dtu_id", "未知"),
+            "DeviceID": data.get("_device_id", "未知"),
             "原始数据预览": data.get("_raw_preview", "无"),
             "最后更新时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "刷新间隔": f"{UPDATE_INTERVAL_SECONDS}秒"
