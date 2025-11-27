@@ -209,7 +209,7 @@ class TechfineAPI:
         if not self.device_id:
             _LOGGER.warning("无有效DeviceID，尝试重新获取...")
             if not self._fetch_device_id_from_dtu():
-                return {"_error": "DeviceID获取失败，请检查DTUID是否正确"}
+                return {"_error": "DeviceID获取失败，请检查DTUID是否正确（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
 
         # 3. 构造数据请求参数
         data_url = DATA_URL_TEMPLATE.format(self.device_id)
@@ -231,7 +231,7 @@ class TechfineAPI:
             except json.JSONDecodeError:
                 self.last_debug_msg = f"数据接口返回非JSON格式：{response.text[:100]}"
                 _LOGGER.error(f"数据接口返回格式异常: {response.text}")
-                return {"_error": self.last_debug_msg}
+                return {"_error": f"{self.last_debug_msg}（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
 
             # 6. 精准判定Token失效（匹配 code=9 + message=Token expired）
             token_expired = False
@@ -257,7 +257,7 @@ class TechfineAPI:
                     result = response.json()
                 else:
                     # 重登失败返回错误
-                    return {"_error": "Token失效，自动重登失败"}
+                    return {"_error": f"Token失效，自动重登失败（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
 
             # 8. 解析有效数据（code=0 为成功）
             if result.get("code") == 0 and "fields" in result.get("data", {}):
@@ -275,16 +275,16 @@ class TechfineAPI:
                 error_msg = result.get("message", "未知错误")
                 self.last_debug_msg = f"数据获取失败：{error_msg}（code: {result.get('code')}）"
                 _LOGGER.error(f"数据接口返回异常: {json.dumps(result, ensure_ascii=False)}")
-                return {"_error": self.last_debug_msg}
+                return {"_error": f"{self.last_debug_msg}（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
 
         except requests.exceptions.RequestException as e:
             error_msg = f"数据请求异常：{str(e)}"
             _LOGGER.error(error_msg)
-            return {"_error": error_msg}
+            return {"_error": f"{error_msg}（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
         except Exception as e:
             error_msg = f"数据解析异常：{str(e)}"
             _LOGGER.error(error_msg, exc_info=True)
-            return {"_error": error_msg}
+            return {"_error": f"{error_msg}（问题反馈：https://github.com/Windear/techfine_cloud/tree/main）"}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Home Assistant集成入口（初始化传感器）"""
@@ -320,14 +320,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
     except Exception as e:
         _LOGGER.warning(f"首次数据刷新失败: {str(e)}，将在{UPDATE_INTERVAL_SECONDS}秒后自动重试")
 
-    # 5. 设备信息（用于HA设备列表显示，添加DTUID标识）
+    # 5. 设备信息（用于HA设备列表显示，添加DTUID标识和GitHub地址）
     device_info = DeviceInfo(
         identifiers={(DOMAIN, api_client.device_id or dtu_id)},  # 用DeviceID或DTUID作为唯一标识
         name=f"Techfine 光伏逆变器（DTU: {dtu_id[-8:]}）",  # 设备名称显示DTUID后8位（简洁）
         manufacturer="Techfine / SiSe Solar",
         model="混合式逆变器",
-        configuration_url="https://solar.siseli.com",
-        sw_version="1.4.0"  # 集成版本号（支持DTUID自动解析）
+        configuration_url="https://github.com/Windear/techfine_cloud/tree/main",  # 关联你的GitHub地址
+        sw_version="1.4.1"  # 版本号升级为1.4.1（标识功率单位统一）
     )
 
     # ======================== 全字段传感器定义（按优先级排序）========================
@@ -338,11 +338,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfYearlyElectricityGeneration", "年发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "tqfTotalElectricityGeneration", "总发电量", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
         
-        # 二、核心功率数据
+        # 二、核心功率数据（全部统一为W单位，添加`is_kw_to_w`标记）
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "pvPower", "PV功率", UnitOfPower.WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "generationPower", "发电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputActivePower", "输出有功功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
-        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "mainsPower", "市电功率", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "generationPower", "发电功率", UnitOfPower.WATT, SensorDeviceClass.POWER, is_kw_to_w=True),  # 原KW→×1000转W
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "outputActivePower", "输出有功功率", UnitOfPower.WATT, SensorDeviceClass.POWER, is_kw_to_w=True),  # 原KW→×1000转W
+        TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "mainsPower", "市电功率", UnitOfPower.WATT, SensorDeviceClass.POWER, is_kw_to_w=True),  # 原KW→×1000转W
         
         # 三、电池核心数据
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "batteryCapacity", "电池容量", PERCENTAGE, SensorDeviceClass.BATTERY),
@@ -375,7 +375,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "deviceType", "设备类型", None, None),
         TechfineSensor(coordinator, api_client.device_id or dtu_id, device_info, "softwareVersion", "软件版本", None, None),
         
-        # 八、调试传感器（最后显示，用于问题排查，新增DTUID/DeviceID显示）
+        # 八、调试传感器（最后显示，用于问题排查，关联GitHub地址）
         TechfineDebugSensor(coordinator, api_client.device_id or dtu_id, device_info, "debug_status", "调试状态"),
     ]
 
@@ -383,22 +383,23 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(sensors)
 
 class TechfineSensor(SensorEntity):
-    """通用传感器类（适配所有数据字段）"""
-    def __init__(self, coordinator, device_unique_id, device_info, field_key, name, unit, device_class, state_class=None):
+    """通用传感器类（适配所有数据字段，支持KW→W转换）"""
+    def __init__(self, coordinator, device_unique_id, device_info, field_key, name, unit, device_class, state_class=None, is_kw_to_w=False):
         self.coordinator = coordinator  # 数据协调器
         self._field_key = field_key  # 接口返回的字段名
         self._attr_unique_id = f"{DOMAIN}_{device_unique_id}_{field_key}"  # 唯一ID（避免重复）
         self._attr_has_entity_name = True  # 启用实体名称（HA 2023.12+要求）
         self._attr_name = name  # 传感器显示名称（中文）
-        self._attr_native_unit_of_measurement = unit  # 单位
+        self._attr_native_unit_of_measurement = unit  # 单位（统一为W）
         self._attr_device_class = device_class  # 设备类别（用于HA图标自动匹配）
         self._attr_state_class = state_class  # 状态类别（累计型/即时型）
         self._attr_device_info = device_info  # 关联设备
         self._attr_should_poll = False  # 禁用主动轮询（使用协调器推送）
+        self._is_kw_to_w = is_kw_to_w  # 标记是否需要KW→W转换（×1000）
 
     @property
     def native_value(self):
-        """获取传感器值（优先取value，非数值取valueDisplay）"""
+        """获取传感器值（优先取value，非数值取valueDisplay；需要时KW→W转换）"""
         if not self.coordinator.data or "_error" in self.coordinator.data:
             return None
         
@@ -407,11 +408,15 @@ class TechfineSensor(SensorEntity):
         if not isinstance(field_data, dict):
             return None
         
-        # 优先获取数值型value，转换失败则取显示值
+        # 优先获取数值型value
         value = field_data.get("value")
         try:
             # 尝试转换为浮点型（适配整数/小数）
-            return float(value) if value is not None else None
+            num_value = float(value) if value is not None else None
+            # 如果是原KW单位的字段，×1000转为W
+            if self._is_kw_to_w and num_value is not None:
+                return round(num_value * 1000, 1)  # 保留1位小数，避免精度冗余
+            return num_value
         except (ValueError, TypeError):
             # 非数值类型（如状态字符串），返回显示值
             return field_data.get("valueDisplay", value)
@@ -448,16 +453,18 @@ class TechfineDebugSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """额外属性（显示DTUID、DeviceID、原始数据预览）"""
+        """额外属性（显示DTUID、DeviceID、原始数据预览，关联GitHub地址）"""
         if not self.coordinator.data:
-            return {"说明": "集成初始化中，暂无数据"}
+            return {"说明": f"集成初始化中，暂无数据 | 问题反馈：https://github.com/Windear/techfine_cloud/tree/main"}
         data = self.coordinator.data
         return {
             "DTUID": data.get("_dtu_id", "未知"),
             "DeviceID": data.get("_device_id", "未知"),
             "原始数据预览": data.get("_raw_preview", "无"),
             "最后更新时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "刷新间隔": f"{UPDATE_INTERVAL_SECONDS}秒"
+            "刷新间隔": f"{UPDATE_INTERVAL_SECONDS}秒",
+            "问题反馈": "https://github.com/Windear/techfine_cloud/tree/main",
+            "集成版本": "1.4.1（功率单位统一为W）"
         }
 
     async def async_added_to_hass(self):
